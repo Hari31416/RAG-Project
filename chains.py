@@ -1,13 +1,10 @@
-# Data Handling
-import transformers
 import pandas as pd
 import logging
 import os
+
 from torch import bfloat16
-
+import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-
-# LangChain
 from langchain.llms import HuggingFacePipeline
 from langchain.document_loaders import DataFrameLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -38,7 +35,21 @@ pipeline_config = {
 }
 
 
-def create_simple_logger(logger_name, level="info"):
+def create_simple_logger(logger_name: str, level: str = "info") -> logging.Logger:
+    """Creates a simple logger with a stream handler.
+
+    Parameters
+    ----------
+    logger_name : str
+        The name of the logger.
+    level : str
+        The log level to use. Must be one of "debug", "info", "warning", "error".
+
+    Returns
+    -------
+    logging.Logger
+        The logger.
+    """
     level_str_to_int = {
         "debug": logging.DEBUG,
         "info": logging.INFO,
@@ -46,6 +57,7 @@ def create_simple_logger(logger_name, level="info"):
         "error": logging.ERROR,
     }
     logger = logging.getLogger(logger_name)
+    # Clear the handlers to avoid duplicate messages
     logger.handlers.clear()
     logger.setLevel(level_str_to_int[level])
     handler = logging.StreamHandler()
@@ -62,12 +74,12 @@ class RAG:
 
     def __init__(
         self,
-        llm_model_id=model_id,
-        quantization_config=quantization_config,
-        embedding_config=embedding_config,
-        pipeline_config=pipeline_config,
-        debug=False,
-        logger=None,
+        llm_model_id: str = model_id,
+        quantization_config: transformers.BitsAndBytesConfig = quantization_config,
+        embedding_config: dict = embedding_config,
+        pipeline_config: dict = pipeline_config,
+        debug: bool = False,
+        logger: logging.Logger | None = None,
     ) -> None:
         """Initializes the RAG model.
 
@@ -115,7 +127,7 @@ class RAG:
         log_level = "debug" if debug else "info"
         self.logger = logger or create_simple_logger("RAG", level=log_level)
 
-    def create_embedding(self, overwrite=False):
+    def create_embedding(self, overwrite: bool = False) -> Chroma:
         """Creates the embedding database and the chroma database.
 
         Parameters
@@ -128,6 +140,7 @@ class RAG:
         Chroma
             The chroma database.
         """
+        # Return the existing database if it exists
         if self.chroma_database is not None and not overwrite:
             self.logger.info("Using existing Chroma database.")
             return self.chroma_database
@@ -147,20 +160,27 @@ class RAG:
         documents = splitter.split_documents(articles)
 
         self.logger.debug("Creating Chroma database.")
-        if os.path.exists(self.embedding_config["chroma_db_path"]):
-            self.logger.info("Removing the existing chroma db folder.")
-            os.system(f"rm -r {self.embedding_config['chroma_db_path']}")
-        chroma_database = Chroma.from_documents(
-            documents,
-            embedding_model,
-            persist_directory=self.embedding_config["chroma_db_path"],
-        )
+        # If the folder exists and we don't want to overwrite, load the existing database
+        if os.path.exists(self.embedding_config["chroma_db_path"]) and not overwrite:
+            self.logger.info("Loading the existing chroma db folder.")
+            chroma_database = Chroma(
+                persist_directory=self.embedding_config["chroma_db_path"],
+                embedding_function=embedding_model,
+            )
+        else:
+            # Otherwise, create a new database
+            self.logger.debug("Creating new Chroma database.")
+            chroma_database = Chroma.from_documents(
+                documents,
+                embedding_model,
+                persist_directory=self.embedding_config["chroma_db_path"],
+            )
         self.chroma_database = chroma_database
 
         self.logger.info("Chroma database created.")
         return chroma_database
 
-    def create_llm_pipeline(self, overwrite=False):
+    def create_llm_pipeline(self, overwrite: bool = False) -> HuggingFacePipeline:
         """Creates the HuggingFace pipeline for the language model.
 
         Parameters
@@ -173,6 +193,7 @@ class RAG:
         HuggingFacePipeline
             The HuggingFace pipeline.
         """
+        # Return the existing pipeline if it exists
         if self.hf_pipeline is not None and not overwrite:
             self.logger.info("Using existing HuggingFace pipeline.")
             return self.hf_pipeline
@@ -195,7 +216,7 @@ class RAG:
         self.logger.info("HuggingFace pipeline created.")
         return hf_pipeline
 
-    def create_retrieval_qa(self, overwrite=False):
+    def create_retrieval_qa(self, overwrite: bool = False) -> RetrievalQA:
         """Creates the RetrievalQA pipeline.
 
         Parameters
@@ -212,10 +233,14 @@ class RAG:
             self.logger.debug("Using existing RetrievalQA pipeline.")
             return self.retrieval_qa
 
+        # Create the embedding database
         chroma_database = self.create_embedding()
+        # Create the retriever
         retriever = chroma_database.as_retriever()
+        # Create the language model pipeline
         llm_pipeline = self.create_llm_pipeline()
 
+        # Create the RetrievalQA pipeline
         self.logger.debug("Creating RetrievalQA pipeline.")
         retrieval_qa = RetrievalQA.from_chain_type(
             llm=llm_pipeline,
@@ -226,6 +251,27 @@ class RAG:
         self.retrieval_qa = retrieval_qa
         self.logger.info("RetrievalQA pipeline created.")
         return retrieval_qa
+
+    def reference_documents(self, question: str) -> list[str]:
+        """Returns the reference documents for the given question.
+
+        Parameters
+        ----------
+        question : str
+            The question to answer.
+
+        Returns
+        -------
+        list
+            The list of reference documents.
+        """
+        # Create the embedding database if it doesn't exist
+        if self.chroma_database is None:
+            _ = self.create_embedding()
+
+        docs = self.chroma_database.similarity_search(question)
+        references = [doc.to_json()["kwargs"]["page_content"] for doc in docs]
+        return references
 
     def answer(self, question):
         """Answers the given question.
@@ -243,6 +289,9 @@ class RAG:
         retrieval_qa = self.create_retrieval_qa()
         self.logger.debug("Asking question.")
         answer = retrieval_qa.invoke(question)["result"]
+        references = self.reference_documents(question)
         print(f"\033[1mQuestion:\033[0m {question}\n")
+        print(f"\033[1mReference Articles:\033[0m\n", "\n".join(references))
+        print("\n")
         print(f"\033[1mAnswer:\033[0m ", answer)
         return answer
