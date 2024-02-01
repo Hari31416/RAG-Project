@@ -5,15 +5,15 @@ import os
 from torch import bfloat16
 import transformers
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-from langchain.llms import HuggingFacePipeline
-from langchain.document_loaders import DataFrameLoader
+from langchain_community.llms.huggingface_pipeline import HuggingFacePipeline
+from langchain_community.document_loaders import DataFrameLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.chains import RetrievalQA
-from langchain.vectorstores import Chroma
+from langchain_community.vectorstores import Chroma
 
 data_dir = "data/wikipedia_crypto_articles.csv"
-model_id = "mistralai/Mistral-7B-v0.1"
+model_id = "mistralai/Mistral-7B-Instruct-v0.1"
 quantization_config = transformers.BitsAndBytesConfig(
     load_in_4bit=True,
     bnb_4bit_quant_type="nf4",
@@ -31,7 +31,7 @@ pipeline_config = {
     "max_length": 1024,
     "temperature": 0.5,
     "no_repeat_ngram_size": 3,
-    "do_sample": False,
+    "do_sample": True,
 }
 
 
@@ -75,7 +75,8 @@ class RAG:
     def __init__(
         self,
         llm_model_id: str = model_id,
-        quantization_config: transformers.BitsAndBytesConfig = quantization_config,
+        quantization_config: transformers.BitsAndBytesConfig
+        | None = quantization_config,
         embedding_config: dict = embedding_config,
         pipeline_config: dict = pipeline_config,
         debug: bool = False,
@@ -201,7 +202,7 @@ class RAG:
         self.logger.debug("Loading model and tokenizer.")
         tokenizer = AutoTokenizer.from_pretrained(self.llm_model_id)
         llm = AutoModelForCausalLM.from_pretrained(
-            self.llm_model_id, quantization_config=quantization_config
+            self.llm_model_id, quantization_config=self.quantization_config
         )
 
         self.logger.debug("Creating HuggingFace pipeline.")
@@ -286,9 +287,12 @@ class RAG:
         str
             The answer to the question.
         """
-        retrieval_qa = self.create_retrieval_qa()
+        # Create the RetrievalQA pipeline if it doesn't exist
+        if self.retrieval_qa is None:
+            _ = self.create_retrieval_qa()
+
         self.logger.debug("Asking question.")
-        answer = retrieval_qa.invoke(question)["result"]
+        answer = self.retrieval_qa.invoke(question)["result"]
         references = self.reference_documents(question)
         print(f"\033[1mQuestion:\033[0m {question}\n")
         print(f"\033[1mReference Articles:\033[0m\n", "\n".join(references))
