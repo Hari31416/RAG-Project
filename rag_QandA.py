@@ -2,12 +2,14 @@ import argparse
 
 
 def get_default(value, default):
+    """Gets the default value if the value is None."""
     if value is None:
         return default
     return value
 
 
 def create_quantization_config(quantization=False):
+    """Creates the quantization config for the model."""
     import transformers
     from torch import bfloat16
 
@@ -24,6 +26,7 @@ def create_quantization_config(quantization=False):
 
 
 def create_embedding_config(args):
+    """Creates the embedding config for the model."""
     embedding_config = {
         "dataset_dir": get_default(
             args.dataset_dir, "data/wikipedia_crypto_articles.csv"
@@ -39,6 +42,7 @@ def create_embedding_config(args):
 
 
 def create_pipeline_config(args):
+    """Creates the pipeline config for the model."""
     pipeline_config = {
         "max_length": get_default(args.max_length, 1024),
         "temperature": get_default(args.temperature, 1.0),
@@ -49,6 +53,7 @@ def create_pipeline_config(args):
 
 
 def create_config(args):
+    """Creates the config for the model."""
     config = {
         "quantization_config": create_quantization_config(args.quantization),
         "embedding_config": create_embedding_config(args),
@@ -58,6 +63,7 @@ def create_config(args):
 
 
 def main(args):
+    """Main function for the script. Takes in the args and runs the model."""
     from chains import RAG
 
     config = create_config(args)
@@ -142,15 +148,15 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--no_repeat_ngram_size",
-        type=int,
+        action=argparse.BooleanOptionalAction,
         help="No repeat ngram size for the generation",
-        default=None,
+        default=True,
     )
     parser.add_argument(
         "--do_sample",
-        type=bool,
         help="Do sample for the generation",
-        default=None,
+        action=argparse.BooleanOptionalAction,
+        default=True,
     )
     parser.add_argument(
         "--debug",
